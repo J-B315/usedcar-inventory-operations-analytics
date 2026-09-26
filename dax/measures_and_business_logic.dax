@@ -1,0 +1,260 @@
+// -----------------------------------------------------------------------------
+// Core inventory measures
+// -----------------------------------------------------------------------------
+
+Total Vehicles =
+DISTINCTCOUNT ( Vehicle_Clean[Vehicle_ID] )
+
+Available Vehicles =
+CALCULATE (
+    [Total Vehicles],
+    Vehicle_Clean[Availability] = TRUE ()
+)
+
+Inventory Value =
+CALCULATE (
+    SUM ( Vehicle_Clean[Selling_Price_CAD] ),
+    Vehicle_Clean[Availability] = TRUE ()
+)
+
+Average Selling Price =
+AVERAGE ( Vehicle_Clean[Selling_Price_CAD] )
+
+Average Mileage =
+AVERAGE ( Vehicle_Clean[Mileage_km] )
+
+// -----------------------------------------------------------------------------
+// Operations measures
+// -----------------------------------------------------------------------------
+
+Ready for Sale Vehicles =
+CALCULATE (
+    [Total Vehicles],
+    Vehicle_Clean[Readiness_Status] = "Ready for Sale"
+)
+
+Action Required Vehicles =
+CALCULATE (
+    [Total Vehicles],
+    Vehicle_Clean[Readiness_Status] = "Action Required"
+)
+
+Critical Vehicles =
+CALCULATE (
+    [Total Vehicles],
+    Vehicle_Clean[Readiness_Status] = "Critical"
+)
+
+Ready for Sale Rate =
+DIVIDE ( [Ready for Sale Vehicles], [Total Vehicles], 0 )
+
+Completed Operations =
+CALCULATE (
+    [Total Vehicles],
+    Vehicle_Clean[Operations_Status] = "Completed"
+)
+
+Data Quality Issues =
+CALCULATE (
+    [Total Vehicles],
+    Vehicle_Clean[Data_Quality_Status] <> "Valid"
+)
+
+// -----------------------------------------------------------------------------
+// Risk measures
+// -----------------------------------------------------------------------------
+
+High Priority Vehicles =
+CALCULATE (
+    [Total Vehicles],
+    Vehicle_Clean[Risk Level] = "High Priority"
+)
+
+Medium Priority Vehicles =
+CALCULATE (
+    [Total Vehicles],
+    Vehicle_Clean[Risk Level] = "Medium Priority"
+)
+
+Low Priority Vehicles =
+CALCULATE (
+    [Total Vehicles],
+    Vehicle_Clean[Risk Level] = "Low Priority"
+)
+
+Average Risk Score =
+AVERAGE ( Vehicle_Clean[Risk Score] )
+
+// -----------------------------------------------------------------------------
+// Pricing calculated columns
+// -----------------------------------------------------------------------------
+
+Make Avg Price =
+VAR CurrentMake = Vehicle_Clean[Make]
+RETURN
+    CALCULATE (
+        AVERAGE ( Vehicle_Clean[Selling_Price_CAD] ),
+        FILTER (
+            ALL ( Vehicle_Clean ),
+            Vehicle_Clean[Make] = CurrentMake
+                && NOT ISBLANK ( Vehicle_Clean[Selling_Price_CAD] )
+        )
+    )
+
+Price Variance vs Make =
+IF (
+    ISBLANK ( Vehicle_Clean[Selling_Price_CAD] ),
+    BLANK (),
+    Vehicle_Clean[Selling_Price_CAD] - Vehicle_Clean[Make Avg Price]
+)
+
+Price Variance % =
+DIVIDE (
+    Vehicle_Clean[Selling_Price_CAD] - Vehicle_Clean[Make Avg Price],
+    Vehicle_Clean[Make Avg Price]
+)
+
+Pricing Exception =
+SWITCH (
+    TRUE (),
+    ISBLANK ( Vehicle_Clean[Selling_Price_CAD] ), "Missing Price",
+    Vehicle_Clean[Price Variance %] >= 0.30, "High Price",
+    Vehicle_Clean[Price Variance %] <= -0.30, "Low Price",
+    "Within Range"
+)
+
+// -----------------------------------------------------------------------------
+// Readiness calculated columns
+// -----------------------------------------------------------------------------
+
+Readiness Score =
+    ( IF ( Vehicle_Clean[Carfax_Status] <> "Missing", 25, 0 ) )
+    + ( IF ( Vehicle_Clean[Ownership_Copy] = TRUE (), 25, 0 ) )
+    + ( IF ( Vehicle_Clean[Operations_Status] = "Completed", 25, 0 ) )
+    + ( IF ( Vehicle_Clean[Salesperson] <> "Unassigned", 25, 0 ) )
+
+Readiness Status =
+SWITCH (
+    TRUE (),
+    Vehicle_Clean[Readiness Score] >= 75, "Ready for Sale",
+    Vehicle_Clean[Readiness Score] >= 50, "Action Required",
+    "Critical"
+)
+
+// -----------------------------------------------------------------------------
+// Rule-based risk calculated columns
+// -----------------------------------------------------------------------------
+
+Risk Score =
+VAR ReadinessRisk =
+    SWITCH (
+        Vehicle_Clean[Readiness_Status],
+        "Critical", 40,
+        "Action Required", 20,
+        "Ready for Sale", 0,
+        10
+    )
+VAR DataQualityRisk =
+    IF ( Vehicle_Clean[Data_Quality_Status] <> "Valid", 20, 0 )
+VAR PricingRisk =
+    SWITCH (
+        Vehicle_Clean[Pricing Exception],
+        "High Price", 15,
+        "Low Price", 10,
+        "Missing Price", 20,
+        0
+    )
+VAR CarfaxRisk =
+    SWITCH (
+        Vehicle_Clean[Carfax_Status],
+        "Missing", 15,
+        "Claimed", 10,
+        "Clean", 0,
+        5
+    )
+VAR AvailabilityRisk =
+    IF ( Vehicle_Clean[Availability] = TRUE (), 0, 10 )
+RETURN
+    ReadinessRisk + DataQualityRisk + PricingRisk + CarfaxRisk + AvailabilityRisk
+
+Risk Level =
+SWITCH (
+    TRUE (),
+    Vehicle_Clean[Risk Score] >= 60, "High Priority",
+    Vehicle_Clean[Risk Score] >= 30, "Medium Priority",
+    "Low Priority"
+)
+
+// -----------------------------------------------------------------------------
+// Dynamic titles
+// -----------------------------------------------------------------------------
+
+Inventory Metric Dynamic Title =
+VAR SelectedMetric =
+    SELECTEDVALUE ( 'Inventory Metric'[Inventory Metric], "Total Vehicles" )
+VAR SelectedMake =
+    SELECTEDVALUE ( Dim_Make[Make], "All Makes" )
+RETURN
+    "Vehicle Inventory Overview | " & SelectedMetric
+        & IF ( SelectedMake = "All Makes", "", " | " & SelectedMake )
+
+Readiness Dynamic Title =
+VAR SelectedMake =
+    SELECTEDVALUE ( Dim_Make[Make], "All Makes" )
+RETURN
+    "Inventory Readiness — " & SelectedMake
+
+// -----------------------------------------------------------------------------
+// Tooltip / vehicle-detail measures
+// -----------------------------------------------------------------------------
+
+Tooltip Vehicle Name =
+VAR YearValue = SELECTEDVALUE ( Vehicle_Clean[Model_Year] )
+VAR MakeValue = SELECTEDVALUE ( Vehicle_Clean[Make] )
+VAR ModelValue = SELECTEDVALUE ( Vehicle_Clean[Model] )
+RETURN
+    IF (
+        ISBLANK ( YearValue ),
+        "Vehicle Details",
+        FORMAT ( YearValue, "0" ) & " " & MakeValue & " " & ModelValue
+    )
+
+Tooltip Price =
+SELECTEDVALUE ( Vehicle_Clean[Selling_Price_CAD] )
+
+Tooltip Mileage =
+SELECTEDVALUE ( Vehicle_Clean[Mileage_km] )
+
+Tooltip Price Variance =
+SELECTEDVALUE ( Vehicle_Clean[Price Variance %] )
+
+Tooltip Readiness =
+SELECTEDVALUE ( Vehicle_Clean[Readiness_Status], "Multiple" )
+
+Selected Readiness Score =
+SELECTEDVALUE ( Vehicle_Clean[Readiness_Score] )
+
+Selected Risk Score =
+SELECTEDVALUE ( Vehicle_Clean[Risk Score] )
+
+Selected Availability =
+IF (
+    SELECTEDVALUE ( Vehicle_Clean[Availability] ) = TRUE (),
+    "Available",
+    "Unavailable"
+)
+
+Selected Carfax Status =
+SELECTEDVALUE ( Vehicle_Clean[Carfax_Status], "N/A" )
+
+Selected Operations Status =
+SELECTEDVALUE ( Vehicle_Clean[Operations_Status], "N/A" )
+
+Selected Readiness Status =
+SELECTEDVALUE ( Vehicle_Clean[Readiness_Status], "N/A" )
+
+Selected Risk Level =
+SELECTEDVALUE ( Vehicle_Clean[Risk Level], "N/A" )
+
+Selected Salesperson =
+SELECTEDVALUE ( Vehicle_Clean[Salesperson], "Unassigned" )
