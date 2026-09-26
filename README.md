@@ -229,8 +229,6 @@ From the exported dashboard snapshot:
 ```text
 used-vehicle-inventory-operations-analytics/
 ├── README.md
-├── power-bi/
-│   └── Vehicle_Inventory_Analytics.pbix
 ├── docs/
 │   ├── Vehicle_Inventory_Analytics_Dashboard.pdf
 │   ├── DATA_MODEL.md
